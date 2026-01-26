@@ -27,32 +27,89 @@ void add_history(char* unused) {}
 #include <editline/readline.h>
 #endif
 
+
 /* Definindo códigos para os erros possíveis. */
 enum { LERR_DIV_ZERO, LERR_BAD_OP, LERR_BAD_NUM };
 
 /* Definindo tipos de valores possíveis. */
-enum { LVAL_NUM, LVAL_ERR };
+enum {LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR};
 
 /* Definindo o novo tipo lval */
-typedef struct {
+typedef struct lval {
     int type;
     long num;
-    int err;
+
+    /* Erro e símbolo são representados como dados string */
+    char err;
+    char sym;
+
+    /* Contador de células e ponteiro para células */
+    int count;
+    struct lval** cell;
+
 } lval;
 
-/* Função para criar um novo lval numérico */
-lval lval_num(long x) {
-    lval v;
-    v.type = LVAL_NUM;
-    v.num = x;
+/* Construir um ponteiro par um novo Número lval */
+lval* lval_num(long x) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_NUM;
+    v->num = x;
     return v;
 }
 
-/* Função para criar um novo lval de erro */
-lval lval_err(int x) {
-    lval v;
-    v.type = LVAL_ERR;
-    v.err = x;
+/* Função para criar um ponteiro para novo lval de erro */
+lval* lval_err(char* m) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_ERR;
+    v->err = malloc(strlen(m) + 1);
+    strcpy(v->err, m);
+    return v;
+}
+
+/* Função para criar um ponteiro para novo lval de símbolo */
+lval* lval_sym(char* s) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_SYM;
+    v->sym = malloc(strlen(s) + 1);
+    strcpy(v->sym, s);
+    return v;
+}
+
+/* Função para criar um ponteiro para novo lval de expressão S */
+lval* lval_sexpr(void) {
+    lval* v = malloc(sizeof(lval));
+    v->type = LVAL_SEXPR;
+    v->count = 0;
+    v->cell = NULL;
+    return v;
+}
+
+void lval_del(lval v) {
+    switch (v->type) {
+        /* Nada especial para números */
+        case LVAL_NUM: break;
+
+        /* Para erros e símbolos, liberar a memória alocada para as strings */
+        case LVAL_ERR: free(v->err); break;
+        case LVAL_SYM: free(v->sym); break;
+
+        /* Para expressões S, liberar todas as células */
+        case LVAL_SEXPR:
+            for (int i = 0; i < v->count; i++) {
+                lval_del(v->cell[i]);
+            }
+            free(v->cell);
+        break;
+    }
+
+    /* Finalmente, liberar o próprio lval */
+    free(v);
+}
+
+lval* lval_add(lval* v, lval* x) {
+    v->count++;
+    v->cell = realloc(v->cell, sizeof(lval*) * v->count);
+    v->cell[v->count - 1] = x;
     return v;
 }
 
@@ -72,22 +129,21 @@ void lval_print(lval v) {
 void lval_println(lval v) { lval_print(v); putchar('\n'); }
 
 /* Usando o operador String para ver qual operacao deve-se realizar */
-lval eval_op(lval x, char* op, lval y) {
+lval eval_op(lval* v, int i) {
     
-    /* Se o valor either é um erro, retorna ele */
-    if(x.type == LVAL_ERR) { return x; }
-    if(y.type == LVAL_ERR) { return y; }
+    /* Pegando o item em i */
+    lval* x = v->cell[i];
 
-    /* De outra maneira, realiza a operacao */
-    if(strcmp(op, "+") == 0) { return lval_num(x.num + y.num); }
-    if(strcmp(op, "-") == 0) { return lval_num(x.num - y.num); }
-    if(strcmp(op, "*") == 0) { return lval_num(x.num * y.num); }
-    if(strcmp(op, "/") == 0) { 
-        /* Checa por divisao por 0 */
-        return y.num == 0 ? lval_err(LERR_DIV_ZERO) : lval_num(x.num / y.num);
-    }
-
-    return lval_err(LERR_BAD_OP);
+    /* Alterando a memória depois do item i para acima do topo */
+    memmove(&v->cell[i], &v->cell[i+1],
+        sizeof(lval*) * (v->count - i - 1));
+    
+    /* Decrementando o contador de células */
+    v->count--;
+    
+    /* Realocando a memória usada */
+    v->cell = realloc(v->cell, sizeof(lval*) * v->count);
+    return x;
 }
 
 lval eval(mpc_ast_t* t) {
